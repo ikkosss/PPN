@@ -28,6 +28,8 @@ class DiagnosticsViewModel : ViewModel() {
                     context = ServiceLocator.appContext,
                     vpn = vpn,
                     hotspot = hs,
+                    vpnMode = ServiceLocator.vpnMode.mode.value.name,
+                    systemVpnActive = ServiceLocator.systemVpn.state.value.active,
                     tetheredTrafficViaVpn = tetheredTrafficViaVpn,
                 ),
             )

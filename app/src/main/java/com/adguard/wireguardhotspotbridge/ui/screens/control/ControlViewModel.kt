@@ -5,6 +5,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.adguard.wireguardhotspotbridge.ServiceLocator
+import com.adguard.wireguardhotspotbridge.domain.VpnMode
 import com.adguard.wireguardhotspotbridge.hotspot.HotspotStateStore
 import com.adguard.wireguardhotspotbridge.vpn.VpnOrchestratorService
 import com.adguard.wireguardhotspotbridge.vpn.VpnState
@@ -21,9 +22,11 @@ enum class TetheredTrafficViaVpn {
 }
 
 data class ControlUiState(
+    val mode: VpnMode = VpnMode.WIREGUARD,
     val hasProfile: Boolean = false,
     val activeProfileId: Long? = null,
     val vpnState: VpnState = VpnState.DISCONNECTED,
+    val systemVpnActive: Boolean = false,
     val hotspotRequestedOn: Boolean = false,
     val hotspotMethod: String = "Settings fallback",
     val tetheredTrafficViaVpn: TetheredTrafficViaVpn = TetheredTrafficViaVpn.UNKNOWN,
@@ -35,9 +38,15 @@ class ControlViewModel : ViewModel() {
     val state: StateFlow<ControlUiState> = _state.asStateFlow()
 
     init {
+        _state.value = _state.value.copy(mode = ServiceLocator.vpnMode.mode.value)
         viewModelScope.launch {
-            val profile = ServiceLocator.profiles.getLatest()
-            _state.value = _state.value.copy(hasProfile = profile != null, activeProfileId = profile?.id)
+            ServiceLocator.vpnMode.mode.collect { m ->
+                _state.value = _state.value.copy(mode = m)
+                refreshProfile()
+            }
+        }
+        viewModelScope.launch {
+            refreshProfile()
         }
         viewModelScope.launch {
             VpnStateStore.state.collect { vpn ->
@@ -53,6 +62,11 @@ class ControlViewModel : ViewModel() {
             }
         }
         viewModelScope.launch {
+            ServiceLocator.systemVpn.state.collect { sys ->
+                _state.value = _state.value.copy(systemVpnActive = sys.active)
+            }
+        }
+        viewModelScope.launch {
             HotspotStateStore.state.collect { hs ->
                 _state.value = _state.value.copy(
                     hotspotRequestedOn = hs.requestedOn,
@@ -65,24 +79,47 @@ class ControlViewModel : ViewModel() {
 
     fun refreshProfile() {
         viewModelScope.launch {
-            val profile = ServiceLocator.profiles.getLatest()
-            _state.value = _state.value.copy(hasProfile = profile != null, activeProfileId = profile?.id)
+            when (ServiceLocator.vpnMode.mode.value) {
+                VpnMode.WIREGUARD -> {
+                    val profile = ServiceLocator.profiles.getLatest()
+                    _state.value = _state.value.copy(hasProfile = profile != null, activeProfileId = profile?.id)
+                }
+                VpnMode.SYSTEM_IKEV2 -> {
+                    val profile = ServiceLocator.ikev2Profiles.getLatest()
+                    _state.value = _state.value.copy(hasProfile = profile != null, activeProfileId = profile?.id)
+                }
+            }
         }
     }
 
     fun startVpnPlusHotspot() {
-        val profileId = state.value.activeProfileId ?: return
-        val intent = Intent(ServiceLocator.appContext, VpnOrchestratorService::class.java)
-            .setAction(VpnOrchestratorService.ACTION_START)
-            .putExtra(VpnOrchestratorService.EXTRA_PROFILE_ID, profileId)
-            .putExtra(VpnOrchestratorService.EXTRA_ENABLE_HOTSPOT, true)
-        ContextCompat.startForegroundService(ServiceLocator.appContext, intent)
+        when (state.value.mode) {
+            VpnMode.WIREGUARD -> {
+                val profileId = state.value.activeProfileId ?: return
+                val intent = Intent(ServiceLocator.appContext, VpnOrchestratorService::class.java)
+                    .setAction(VpnOrchestratorService.ACTION_START)
+                    .putExtra(VpnOrchestratorService.EXTRA_PROFILE_ID, profileId)
+                    .putExtra(VpnOrchestratorService.EXTRA_ENABLE_HOTSPOT, true)
+                ContextCompat.startForegroundService(ServiceLocator.appContext, intent)
+            }
+            VpnMode.SYSTEM_IKEV2 -> {
+                // Can't control system IKEv2 programmatically without privileged APIs.
+                ServiceLocator.hotspot.startBestEffort()
+            }
+        }
     }
 
     fun stopVpn() {
-        val intent = Intent(ServiceLocator.appContext, VpnOrchestratorService::class.java)
-            .setAction(VpnOrchestratorService.ACTION_STOP)
-        ServiceLocator.appContext.startService(intent)
+        when (state.value.mode) {
+            VpnMode.WIREGUARD -> {
+                val intent = Intent(ServiceLocator.appContext, VpnOrchestratorService::class.java)
+                    .setAction(VpnOrchestratorService.ACTION_STOP)
+                ServiceLocator.appContext.startService(intent)
+            }
+            VpnMode.SYSTEM_IKEV2 -> {
+                // No-op: user disables system VPN manually.
+            }
+        }
     }
 }
 

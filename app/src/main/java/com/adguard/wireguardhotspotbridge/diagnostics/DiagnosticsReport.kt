@@ -11,6 +11,8 @@ object DiagnosticsReport {
         context: Context,
         vpn: VpnRuntimeState,
         hotspot: HotspotRuntimeState,
+        vpnMode: String,
+        systemVpnActive: Boolean,
         tetheredTrafficViaVpn: String,
     ): String {
         val vpnPrepared = VpnService.prepare(context) == null
@@ -19,7 +21,9 @@ object DiagnosticsReport {
             appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
             appendLine("VPN permission prepared: ${if (vpnPrepared) "yes" else "no"}")
+            appendLine("VPN mode: $vpnMode")
             appendLine("VPN state: ${vpn.vpnState}")
+            appendLine("System VPN active: $systemVpnActive")
             appendLine("Active profile id: ${vpn.activeProfileId ?: "-"}")
             appendLine("Hotspot control method: ${hotspot.method}")
             appendLine("Hotspot requested: ${hotspot.requestedOn}")

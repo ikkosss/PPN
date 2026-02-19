@@ -26,6 +26,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.adguard.wireguardhotspotbridge.ServiceLocator
+import com.adguard.wireguardhotspotbridge.domain.VpnMode
 import com.adguard.wireguardhotspotbridge.vpn.VpnState
 
 @Composable
@@ -53,18 +54,30 @@ fun ControlScreen(contentPadding: PaddingValues, vm: ControlViewModel = viewMode
         Text("Управление")
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("VPN + Hotspot")
-            val checked = st.vpnState == VpnState.CONNECTED || st.vpnState == VpnState.CONNECTING
+            Text(
+                when (st.mode) {
+                    VpnMode.WIREGUARD -> "VPN + Hotspot"
+                    VpnMode.SYSTEM_IKEV2 -> "Hotspot (VPN вручную)"
+                },
+            )
+            val checked = when (st.mode) {
+                VpnMode.WIREGUARD -> st.vpnState == VpnState.CONNECTED || st.vpnState == VpnState.CONNECTING
+                VpnMode.SYSTEM_IKEV2 -> st.hotspotRequestedOn
+            }
             Switch(
                 checked = checked,
                 onCheckedChange = { on ->
                     if (on) {
                         vm.refreshProfile()
                         if (!st.hasProfile || st.activeProfileId == null) return@Switch
-                        val prepare = VpnService.prepare(context)
-                        if (prepare != null) {
-                            pendingStart = true
-                            vpnPermissionLauncher.launch(prepare)
+                        if (st.mode == VpnMode.WIREGUARD) {
+                            val prepare = VpnService.prepare(context)
+                            if (prepare != null) {
+                                pendingStart = true
+                                vpnPermissionLauncher.launch(prepare)
+                            } else {
+                                vm.startVpnPlusHotspot()
+                            }
                         } else {
                             vm.startVpnPlusHotspot()
                         }
@@ -77,7 +90,12 @@ fun ControlScreen(contentPadding: PaddingValues, vm: ControlViewModel = viewMode
 
         HorizontalDivider()
 
-        Text("VPN: ${st.vpnState}")
+        Text(
+            when (st.mode) {
+                VpnMode.WIREGUARD -> "VPN: ${st.vpnState}"
+                VpnMode.SYSTEM_IKEV2 -> "System VPN: ${if (st.systemVpnActive) "active" else "inactive"}"
+            },
+        )
         Text("Hotspot: ${if (st.hotspotRequestedOn) "requested ON" else "OFF/unknown"} (${st.hotspotMethod})")
         Text(
             "Tethered traffic via VPN: ${
@@ -89,6 +107,9 @@ fun ControlScreen(contentPadding: PaddingValues, vm: ControlViewModel = viewMode
             }",
         )
         Text("Важно: без root/привилегий ОС нельзя гарантировать VPN для клиентов хотспота на всех устройствах.")
+        if (st.mode == VpnMode.SYSTEM_IKEV2) {
+            Text("IKEv2 включается/выключается в системных настройках VPN (приложение не может сделать это само).")
+        }
 
         if (pendingStart) {
             Text("Ожидается разрешение VPN…")
@@ -98,6 +119,11 @@ fun ControlScreen(contentPadding: PaddingValues, vm: ControlViewModel = viewMode
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (st.mode == VpnMode.SYSTEM_IKEV2) {
+                Button(onClick = { context.startActivity(android.content.Intent(android.provider.Settings.ACTION_VPN_SETTINGS)) }) {
+                    Text("Открыть настройки VPN")
+                }
+            }
             Button(onClick = { ServiceLocator.hotspot.openSystemHotspotSettings() }) {
                 Text("Открыть настройки раздачи")
             }
