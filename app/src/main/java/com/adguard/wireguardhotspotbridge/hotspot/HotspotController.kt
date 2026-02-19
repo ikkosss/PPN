@@ -2,7 +2,6 @@ package com.adguard.wireguardhotspotbridge.hotspot
 
 import android.content.Context
 import android.content.Intent
-import android.net.TetheringManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -30,39 +29,24 @@ class HotspotController(private val appContext: Context) {
     }
 
     fun openSystemHotspotSettings(context: Context = appContext) {
-        val intent = Intent(Settings.ACTION_TETHER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val intent = Intent(ACTION_TETHER_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
     private fun startViaTetheringManager(): Boolean {
         return try {
-            val tetheringManager = appContext.getSystemService(TetheringManager::class.java) ?: return false
+            val tmClass = Class.forName("android.net.TetheringManager")
+            val tetheringManager = appContext.getSystemService(tmClass) ?: return false
 
-            val callback = object : TetheringManager.StartTetheringCallback() {
-                override fun onTetheringStarted() {
-                    HotspotStateStore.update(
-                        HotspotRuntimeState(
-                            requestedOn = true,
-                            method = HotspotControlMethod.TETHERING_MANAGER,
-                        ),
-                    )
-                }
+            val tetheringTypeWifi = runCatching { tmClass.getField("TETHERING_WIFI").getInt(null) }.getOrNull() ?: 0
 
-                override fun onTetheringFailed(error: Int) {
-                    HotspotStateStore.update(
-                        HotspotRuntimeState(
-                            requestedOn = true,
-                            method = HotspotControlMethod.SETTINGS_FALLBACK,
-                            lastError = "TetheringManager: не удалось (ошибка $error) — включите вручную",
-                        ),
-                    )
-                }
-            }
+            val callbackObj: Any? = runCatching {
+                val cbClass = Class.forName("android.net.TetheringManager\$StartTetheringCallback")
+                cbClass.getDeclaredConstructor().newInstance()
+            }.getOrNull()
 
-            val startMethod = tetheringManager::class.java.methods
-                .firstOrNull { m -> m.name == "startTethering" && m.parameterTypes.isNotEmpty() }
-                ?: return false
+            val startMethod = tmClass.methods.firstOrNull { m -> m.name == "startTethering" } ?: return false
 
             HotspotStateStore.update(
                 HotspotRuntimeState(
@@ -72,16 +56,23 @@ class HotspotController(private val appContext: Context) {
             )
 
             val handler = Handler(Looper.getMainLooper())
-            when (startMethod.parameterTypes.size) {
-                4 -> startMethod.invoke(tetheringManager, TetheringManager.TETHERING_WIFI, executor, callback, handler)
-                3 -> startMethod.invoke(tetheringManager, TetheringManager.TETHERING_WIFI, executor, callback)
-                else -> return false
-            }
+            runCatching {
+                when (startMethod.parameterTypes.size) {
+                    4 -> startMethod.invoke(tetheringManager, tetheringTypeWifi, executor, callbackObj, handler)
+                    3 -> startMethod.invoke(tetheringManager, tetheringTypeWifi, executor, callbackObj)
+                    else -> return false
+                }
+            }.getOrElse { return false }
             true
         } catch (t: Throwable) {
             Log.w("HotspotController", "startViaTetheringManager failed", t)
             false
         }
+    }
+
+    private companion object {
+        // Use literal to avoid compile-time API differences.
+        private const val ACTION_TETHER_SETTINGS = "android.settings.TETHER_SETTINGS"
     }
 }
 

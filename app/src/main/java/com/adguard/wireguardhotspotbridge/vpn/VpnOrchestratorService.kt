@@ -102,7 +102,7 @@ class VpnOrchestratorService : Service() {
 
     private fun buildNotification(text: String) =
         NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.stat_sys_vpn_ic)
+            .setSmallIcon(R.drawable.ic_vpn_notification)
             .setContentTitle(getString(R.string.app_name))
             .setContentText(text)
             .setOngoing(true)
